@@ -2,7 +2,7 @@
 
 """
 Frontend Streamlit Dashboard - User Interface for Financial Analysis
-This module provides the web interface for the financial dashboard.
+This module provides the web interface for the financial dashboard with interactive charting.
 """
 
 import streamlit as st
@@ -48,7 +48,6 @@ def _style_selected_rows(row: pd.Series, selected_rows: List[str]) -> List[str]:
     return [highlight_style if row.name in selected_rows else '' for _ in row]
 
 
-# IMPORTANT: All methods below must be correctly indented to be part of the class.
 class DashboardUI:
     """Frontend UI class for the financial dashboard"""
 
@@ -63,7 +62,7 @@ class DashboardUI:
             'analysis_data': None,
             'hist_period': '1y',
             'chart_preferences': {'chart_type': 'line', 'theme': 'plotly_white'},
-            'user_symbol_input': 'AAPL' # Default symbol on first load
+            'user_symbol_input': 'AAPL'
         }
         for key, value in defaults.items():
             if key not in st.session_state:
@@ -80,13 +79,11 @@ class DashboardUI:
             st.header("🎛️ Dashboard Controls")
             st.subheader("📊 Stock Selection")
 
-            # This input widget's value is controlled by the session state
             symbol_input_from_user = st.text_input(
                 "Enter Stock Symbol:",
                 value=st.session_state.user_symbol_input,
                 help="Enter a valid stock symbol (e.g., AAPL, MSFT, BRK-B)"
             )
-            # When the user types, update the state for the next rerun
             st.session_state.user_symbol_input = symbol_input_from_user
 
             st.write("Or select from popular stocks:")
@@ -99,7 +96,7 @@ class DashboardUI:
 
             st.divider()
             st.subheader("📈 Chart Preferences")
-            chart_type = st.selectbox("Chart Type for Statements", ["line", "bar", "area"])
+            chart_type = st.selectbox("Chart Type for Statements", ["line", "bar"], help="Select the chart type for visualizing statement rows.")
             chart_theme = st.selectbox("Chart Theme", ["plotly_white", "plotly_dark", "simple_white", "ggplot2"])
             st.session_state.chart_preferences = {'chart_type': chart_type, 'theme': chart_theme}
             
@@ -120,18 +117,27 @@ class DashboardUI:
             return st.session_state.user_symbol_input, fetch_data, hist_period
 
     def create_metric_cards(self, analysis_data: Dict[str, Any]):
-        """Create metric cards for key financial data with robust error handling."""
+        """Create metric cards for key financial data."""
         basic_info = analysis_data.get('basic_info', {})
+        valuation_metrics = analysis_data.get('valuation_metrics', {})
+        profitability_metrics = analysis_data.get('profitability_metrics', {})
+        
         col1, col2, col3, col4 = st.columns(4)
-        
-        # Price and Change
-        price = basic_info.get('current_price')
-        change = basic_info.get('change_percent')
-        st.metric("Current Price", f"${price:.2f}" if isinstance(price, (int, float)) else "N/A", f"{change:.2f}%" if isinstance(change, (int, float)) else None)
-        
-        # Other metrics... (condensed for brevity, logic is the same)
-        mkt_cap = basic_info.get('market_cap')
-        st.metric("Market Cap", f"${mkt_cap / 1e9:.2f}B" if isinstance(mkt_cap, (int, float)) else "N/A")
+
+        with col1:
+            price = basic_info.get('current_price')
+            change = basic_info.get('change_percent')
+            st.metric("Current Price", f"${price:.2f}" if isinstance(price, (int, float)) else "N/A", f"{change:.2f}%" if isinstance(change, (int, float)) else None)
+        with col2:
+            mkt_cap = basic_info.get('market_cap')
+            st.metric("Market Cap", f"${mkt_cap / 1e9:.2f}B" if isinstance(mkt_cap, (int, float)) else "N/A", help="Market Capitalization")
+        with col3:
+            pe = valuation_metrics.get('pe_ratio')
+            st.metric("P/E Ratio", f"{pe:.2f}" if isinstance(pe, (int, float)) else "N/A", help="Price-to-Earnings (TTM)")
+        with col4:
+            roe = profitability_metrics.get('roe')
+            st.metric("ROE", f"{roe*100:.2f}%" if isinstance(roe, (int, float)) else "N/A", help="Return on Equity")
+
 
     def create_financial_charts(self, analysis_data: Dict[str, Any]):
         """Create combined financial price and volume charts."""
@@ -139,29 +145,93 @@ class DashboardUI:
         if historical_data is not None and not historical_data.empty:
             st.subheader("📈 Price & Volume History")
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
-            fig.add_trace(go.Scatter(x=historical_data['Date'], y=historical_data['Close'], name='Close'), row=1, col=1)
-            fig.add_trace(go.Bar(x=historical_data['Date'], y=historical_data['Volume'], name='Volume'), row=2, col=1)
-            fig.update_layout(title_text=f"Price and Volume for {st.session_state.current_symbol}", height=500, showlegend=False)
+            fig.add_trace(go.Scatter(x=historical_data['Date'], y=historical_data['Close'], name='Close Price', line=dict(color='#1f77b4')), row=1, col=1)
+            fig.add_trace(go.Bar(x=historical_data['Date'], y=historical_data['Volume'], name='Volume', marker_color='rgba(55, 83, 109, 0.6)'), row=2, col=1)
+            fig.update_layout(
+                title_text=f"Price and Volume for {st.session_state.current_symbol}",
+                template=st.session_state.chart_preferences['theme'],
+                height=500,
+                showlegend=False,
+                xaxis_rangeslider_visible=False
+            )
+            fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+            fig.update_yaxes(title_text="Volume", row=2, col=1)
             st.plotly_chart(fig, use_container_width=True)
 
+    # FEATURE ENHANCEMENT: New plotting function
+    def plot_selected_rows(self, df: pd.DataFrame, selected_rows: List[str], title: str):
+        """
+        Plots multiple selected rows from a financial statement DataFrame on a single chart
+        for correlation and comparison analysis.
+        """
+        if not selected_rows:
+            return
+
+        # Prepare data for plotting
+        plot_df = df.loc[selected_rows].T
+        # Convert index to numeric for proper sorting on x-axis if it's years
+        plot_df.index = pd.to_numeric(plot_df.index)
+        plot_df = plot_df.sort_index()
+        plot_df.index = plot_df.index.astype(str) # Convert back to string for display
+
+        # Get chart preferences from sidebar
+        chart_prefs = st.session_state.chart_preferences
+        chart_type = chart_prefs.get('chart_type', 'line')
+        theme = chart_prefs.get('theme', 'plotly_white')
+
+        st.markdown("---")
+        st.subheader(f"📊 Chart for Selected Rows in {title}")
+
+        if chart_type == 'bar':
+            fig = px.bar(plot_df, x=plot_df.index, y=plot_df.columns, title=f"Comparison: {', '.join(selected_rows)}", barmode='group')
+        else: # Default to line chart
+            fig = px.line(plot_df, x=plot_df.index, y=plot_df.columns, title=f"Trend Analysis: {', '.join(selected_rows)}", markers=True)
+
+        fig.update_layout(
+            xaxis_title="Year",
+            yaxis_title="Amount",
+            legend_title="Metrics",
+            template=theme
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
+    # FEATURE ENHANCEMENT: Updated this function to include multiselect and call the plotter
     def create_financial_statements_tables(self, analysis_data: Dict[str, Any]):
-        """Create financial statements tables in tabs."""
+        """Create financial statements tables with interactive row selection for charting."""
         statements = analysis_data.get('statements', {})
         tab1, tab2, tab3 = st.tabs(["Income Statement", "Balance Sheet", "Cash Flow"])
 
-        def display_statement(statement_df, title, key_prefix):
+        def display_statement_with_charting(statement_df, title, key_prefix):
             if statement_df is not None and not statement_df.empty:
                 df_display = statement_df.set_index('Year').T
-                st.dataframe(df_display.style.format("{:,.0f}", na_rep="N/A"), use_container_width=True)
+                
+                # FEATURE: Add multiselect widget to choose rows
+                st.markdown(f"**Select rows from the {title} below to visualize them.**")
+                selected_rows = st.multiselect(
+                    f"Select rows to chart:",
+                    options=df_display.index.tolist(),
+                    key=f"{key_prefix}_multiselect"
+                )
+
+                # Apply styling to highlight selected rows
+                styled_df = df_display.style.format("{:,.0f}", na_rep="N/A")
+                if selected_rows:
+                    styled_df = styled_df.apply(_style_selected_rows, selected_rows=selected_rows, axis=1)
+                
+                st.dataframe(styled_df, use_container_width=True)
+
+                # FEATURE: Call the plotting function if rows are selected
+                self.plot_selected_rows(df_display, selected_rows, title)
             else:
                 st.warning(f"{title} data not available.")
 
         with tab1:
-            display_statement(statements.get('income_statement'), "Income Statement", "income")
+            display_statement_with_charting(statements.get('income_statement'), "Income Statement", "income")
         with tab2:
-            display_statement(statements.get('balance_sheet'), "Balance Sheet", "balance")
+            display_statement_with_charting(statements.get('balance_sheet'), "Balance Sheet", "balance")
         with tab3:
-            display_statement(statements.get('cash_flow'), "Cash Flow", "cashflow")
+            display_statement_with_charting(statements.get('cash_flow'), "Cash Flow", "cashflow")
 
     def create_ratio_analysis(self, analysis_data: Dict[str, Any]):
         """Create ratio analysis section."""
@@ -172,6 +242,14 @@ class DashboardUI:
         
         st.subheader("🔢 Financial Ratios Over Time")
         st.dataframe(ratios_df.set_index('Year'), use_container_width=True)
+
+        # Plot key ratios over time for visual analysis
+        key_ratios_to_plot = ['Net Profit Margin (%)', 'ROE (%)', 'Debt to Equity', 'Current Ratio']
+        plot_ratios = [r for r in key_ratios_to_plot if r in ratios_df.columns]
+        if plot_ratios:
+            fig = px.line(ratios_df, x='Year', y=plot_ratios, title="Key Financial Ratio Trends", markers=True)
+            fig.update_layout(template=st.session_state.chart_preferences['theme'])
+            st.plotly_chart(fig, use_container_width=True)
 
     def run(self):
         """Main method to run the dashboard application."""
@@ -213,13 +291,13 @@ class DashboardUI:
                 self.create_financial_charts(analysis_data)
             with tab2:
                 self.create_financial_statements_tables(analysis_data)
+                st.markdown("---")
                 self.create_ratio_analysis(analysis_data)
         else:
             st.markdown("## 👋 Welcome to the Advanced Financial Dashboard!")
             st.info("Enter a stock symbol and click 'Fetch Data' to begin.")
 
 
-# Main execution block
 if __name__ == "__main__":
     dashboard = DashboardUI()
     dashboard.run()
