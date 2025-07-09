@@ -31,30 +31,43 @@ else:
 def get_stock_data(symbol):
     stock = yf.Ticker(symbol)
     info = stock.info
-    return stock, info
+    # Fetch financial statements
+    financials = stock.financials if not stock.financials.empty else None
+    balance_sheet = stock.balance_sheet if not stock.balance_sheet.empty else None
+    cashflow = stock.cashflow if not stock.cashflow.empty else None
+    # Return a dictionary of serializable data
+    return {
+        "info": info,
+        "financials": financials.to_dict() if financials is not None else None,
+        "balance_sheet": balance_sheet.to_dict() if balance_sheet is not None else None,
+        "cashflow": cashflow.to_dict() if cashflow is not None else None
+    }
 
 # Button to trigger data fetching
 if st.button("Get Data"):
     with st.spinner("Fetching data..."):
         try:
-            stock, info = get_stock_data(symbol)
-            if not info:
+            data = get_stock_data(symbol)
+            if not data["info"]:
                 st.error("Invalid symbol or no data available.")
             else:
                 st.success(f"Data for {symbol} fetched successfully!")
                 
+                # Recreate the Ticker object if needed
+                stock = yf.Ticker(symbol)
+                
                 # Section: Company Information
                 with st.expander("Company Information", expanded=True):
-                    st.write(f"**Name:** {info.get('longName', 'N/A')}")
-                    st.write(f"**Sector:** {info.get('sector', 'N/A')}")
-                    st.write(f"**Industry:** {info.get('industry', 'N/A')}")
-                    st.write(f"**Market Cap:** {info.get('marketCap', 'N/A')}")
+                    st.write(f"**Name:** {data['info'].get('longName', 'N/A')}")
+                    st.write(f"**Sector:** {data['info'].get('sector', 'N/A')}")
+                    st.write(f"**Industry:** {data['info'].get('industry', 'N/A')}")
+                    st.write(f"**Market Cap:** {data['info'].get('marketCap', 'N/A')}")
                 
                 # Section: Key Metrics
                 with st.expander("Key Metrics"):
                     metrics = ["trailingPE", "forwardPE", "priceToBook", "debtToEquity"]
                     for metric in metrics:
-                        value = info.get(metric, 'N/A')
+                        value = data['info'].get(metric, 'N/A')
                         st.write(f"**{metric}:** {value}")
                 
                 # Section: Historical Price Data
@@ -69,13 +82,15 @@ if st.button("Get Data"):
                 # Section: Financial Statements
                 with st.expander("Financial Statements"):
                     stmt_type = st.selectbox("Select Statement:", ["Income Statement", "Balance Sheet", "Cash Flow"])
-                    if stmt_type == "Income Statement":
-                        stmt = stock.financials
-                    elif stmt_type == "Balance Sheet":
-                        stmt = stock.balance_sheet
+                    if stmt_type == "Income Statement" and data["financials"]:
+                        stmt = pd.DataFrame(data["financials"])
+                    elif stmt_type == "Balance Sheet" and data["balance_sheet"]:
+                        stmt = pd.DataFrame(data["balance_sheet"])
+                    elif stmt_type == "Cash Flow" and data["cashflow"]:
+                        stmt = pd.DataFrame(data["cashflow"])
                     else:
-                        stmt = stock.cashflow
-                    if not stmt.empty:
+                        stmt = None
+                    if stmt is not None:
                         st.dataframe(stmt)
                     else:
                         st.warning(f"No {stmt_type.lower()} data available.")
